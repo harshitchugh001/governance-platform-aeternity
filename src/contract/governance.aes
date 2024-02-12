@@ -1,0 +1,84 @@
+@compiler >= 6
+include "String.aes"
+
+contract GovernancePlatform =
+    record proposal = {
+        id: int,
+        description: string,
+        submitter: address,
+        votes: map(address, string),
+        approvalStatus: string
+        }
+
+    record state = {
+        proposals: map(int, proposal),
+        nextProposalId: int,
+        registrationFee: int}
+
+    entrypoint init(registrationFee: int): state =
+        { proposals = {}, nextProposalId = 1, registrationFee = registrationFee }
+
+    stateful entrypoint submitProposal(description: string): int =
+        let proposalId = state.nextProposalId
+        let newProposal = { id = proposalId, description = description, submitter = Call.caller, votes = {}, approvalStatus = "Pending" }
+        put(state{ proposals[proposalId] = newProposal, nextProposalId = proposalId + 1 })
+        proposalId
+
+    entrypoint getAllProposals(): map(int, proposal) =
+        state.proposals
+
+    entrypoint getProposalById(proposalId: int): option(proposal) =
+        Map.lookup(proposalId, state.proposals)
+
+    payable stateful entrypoint vote(proposalId: int, voting: string): int =
+        require(!Map.member(Call.caller, state.proposals[proposalId].votes), "Already voted")
+        require(Call.value >= state.registrationFee, "Insufficient funds to vote")
+        Chain.spend(Call.caller, state.registrationFee)
+        let updatedVotes = state.proposals[proposalId].votes{ [Call.caller] = voting }
+        put(state{ proposals[proposalId].votes = updatedVotes })
+        proposalId
+
+    stateful entrypoint votecount(proposalId: int): map(address, string) =
+        switch (Map.lookup(proposalId, state.proposals))
+            None => {}
+            Some(proposal) => proposal.votes
+
+    entrypoint countTrueVotes(proposalId: int): int =
+        let proposal = state.proposals[proposalId]
+        switch(Map.lookup(proposalId, state.proposals))
+            None => 0
+            Some(proposal) =>
+                countVotes(Map.to_list(proposal.votes), "true")
+
+    entrypoint countFalseVotes(proposalId: int): int =
+        let proposal = state.proposals[proposalId]
+        switch(Map.lookup(proposalId, state.proposals))
+            None => 0
+            Some(proposal) =>
+                countVotes(Map.to_list(proposal.votes), "false")
+
+    function countVotes(votesList: list((address * string)), value: string): int =
+        switch(votesList)
+            [] => 0
+            (address, vote) :: tail =>
+                if (vote == value)
+                    1 + countVotes(tail, value)
+                else
+                    countVotes(tail, value)
+
+    stateful entrypoint processProposal(proposalId: int): string =
+        let proposal = state.proposals[proposalId]
+        let trueVotes = countTrueVotes(proposalId)
+        let falseVotes = countFalseVotes(proposalId)
+        let amount = trueVotes + falseVotes
+        let totalVotes=trueVotes + falseVotes
+
+        require(totalVotes >= 10, "Minimum 10 votes required to process the proposal")
+        require(trueVotes > falseVotes + 2, "Insufficient 'true' votes to approve the proposal")
+        if (trueVotes > falseVotes) 
+            Chain.spend(proposal.submitter, Contract.balance)
+            put(state{ proposals[proposalId].approvalStatus = "Approved" })
+            "Proposal accepted"
+        else 
+            put(state{ proposals[proposalId].approvalStatus = "Rejected" })
+            "Proposal Rejected"

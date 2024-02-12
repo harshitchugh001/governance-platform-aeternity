@@ -1,0 +1,23 @@
+async function callContractStatic() {
+    callStaticResult.value.setInfo("Dry-Running ...");
+    const args = argsStringToArgs(callStaticData.value.args);
+    const options = { callStatic: true, gas: callStaticData.value.gas };
+
+    contractInstance
+      ?.$call(callStaticData.value.func, args, options)
+      .then((result) => {
+        if (result.tx.tag !== Tag.ContractCallTx)
+          throw new Error("Unexpected transaction");
+        callStaticResult.value.setFinal(
+          `Dry-Run Gas Estimate: ${result?.result
+            ?.gasUsed}, Fee Estimate: ${toAe(result.tx.fee)} ae (${
+            result.tx.fee
+          } aetto)`,
+          JSON.stringify(result?.decodedResult),
+        );
+      })
+      .catch((error) => {
+        if (error instanceof Error)
+          callStaticResult.value.setError(error.message);
+      });
+  }
